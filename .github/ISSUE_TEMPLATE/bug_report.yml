@@ -1,0 +1,36 @@
+name: 不具合報告 / Bug report
+description: 再現手順と環境を共有してください。
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        個人のメモ、認証情報、非公開ページのURLは添付しないでください。
+        脆弱性は公開Issueに詳細を書かず、SECURITY.mdを参照してください。
+  - type: input
+    id: environment
+    attributes:
+      label: 環境 / Environment
+      description: OS、Chrome、MarginClipのバージョンと導入方法
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順 / Steps to reproduce
+      description: 公開ページまたは架空のデータで説明してください。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した動作 / Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の動作 / Actual behavior
+      description: エラーやスクリーンショットは個人情報を除いて添付してください。
+    validations:
+      required: true
