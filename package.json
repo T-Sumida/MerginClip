@@ -1,0 +1,49 @@
+{
+  "name": "marginclip",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ページを読みながら書く、ローカル保存のMarkdownメモ。",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/T-Sumida/MerginClip.git"
+  },
+  "homepage": "https://github.com/T-Sumida/MerginClip#readme",
+  "bugs": { "url": "https://github.com/T-Sumida/MerginClip/issues" },
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "build": "npm run typecheck && node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "check:docs": "node scripts/check-docs.mjs",
+    "check": "npm run check:docs && npm run test && npm run build && npm run test:e2e",
+    "package": "npm run build && node scripts/package.mjs"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "@tiptap/core": "3.31.4",
+    "@tiptap/extension-image": "3.31.4",
+    "@tiptap/extension-link": "3.31.4",
+    "@tiptap/extension-placeholder": "3.31.4",
+    "@tiptap/markdown": "3.31.4",
+    "@tiptap/pm": "3.31.4",
+    "@tiptap/starter-kit": "3.31.4",
+    "dompurify": "^3.3.0",
+    "fflate": "^0.8.2",
+    "turndown": "^7.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@types/chrome": "^0.1.24",
+    "@types/jsdom": "^30.0.0",
+    "@types/turndown": "^5.0.5",
+    "esbuild": "^0.28.2",
+    "fake-indexeddb": "^6.2.4",
+    "jsdom": "^27.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3"
+  }
+}
