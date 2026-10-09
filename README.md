@@ -1,0 +1,2 @@
+# MerginClip
+メモとり用Chromeプラグイン
