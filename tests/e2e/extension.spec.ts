@@ -1,4 +1,4 @@
-import { test, expect, chromium, type BrowserContext, type Page, type CDPSession } from '@playwright/test';
+import { test, expect, chromium, type BrowserContext, type Page, type CDPSession, type Download } from '@playwright/test';
 import { resolve } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -163,6 +163,40 @@ test('downloads an archive with article image URLs and local note images', async
   expect(Object.keys(archive).filter(path => path.startsWith('assets/'))).toHaveLength(1);
   expect(Object.keys(archive).sort()).toEqual(expect.arrayContaining([expect.stringMatching(/^\d{8}_\d{6}_読書の記事 A_article\.md$/), expect.stringMatching(/^\d{8}_\d{6}_読書の記事 A_note\.md$/), 'assets/image-001.png']));
   expect(Object.keys(archive)).toHaveLength(3);
+});
+
+test('downloads Markdown and note images as separate files into one folder', async () => {
+  // Playwright saves Downloads API files under blob UUID names, so record the requested paths.
+  await panel.evaluate(() => {
+    const original = chrome.downloads.download.bind(chrome.downloads);
+    const requested: string[] = (globalThis as unknown as { requested: string[] }).requested = [];
+    chrome.downloads.download = (options: chrome.downloads.DownloadOptions) => { requested.push(`${options.filename}|${options.saveAs}`); return original(options); };
+  });
+  const downloads: Download[] = [];
+  const listener = (download: Download) => { downloads.push(download); };
+  panel.on('download', listener);
+  try {
+    await panel.locator('#export-files').click();
+    await expect(panel.locator('#message')).toContainText('Markdownと画像の保存を開始しました');
+    await expect.poll(() => downloads.length).toBe(3);
+  } finally { panel.off('download', listener); }
+  const requested = await panel.evaluate(() => (globalThis as unknown as { requested: string[] }).requested);
+  const folder = requested[0].split('/').slice(0, 2).join('/');
+  expect(folder).toMatch(/^MarginClip\/\d{8}_\d{6}_読書の記事 A_[0-9a-f]{8}$/);
+  const basename = folder.slice('MarginClip/'.length, -'_00000000'.length);
+  expect(requested).toEqual([
+    `${folder}/${basename}_article.md|false`,
+    `${folder}/${basename}_note.md|false`,
+    `${folder}/assets/image-001.png|false`,
+  ]);
+  const files = await Promise.all(downloads.map(async download => readFile((await download.path())!)));
+  const note = files.map(file => file.toString('utf8')).find(text => text.includes('type: "note"'))!;
+  expect(note).toContain('# 読書メモ');
+  expect(note).toContain('assets/image-001.png');
+  expect(note).not.toContain('data:image');
+  expect(files.some(file => file.subarray(1, 4).toString('latin1') === 'PNG')).toBe(true);
+  await expect(panel.locator('#export')).toBeEnabled();
+  await expect(panel.locator('#export-files')).toHaveText('↓ .md + assets');
 });
 
 test('opens saved notes without following navigation and supports backup and merge restore', async () => {

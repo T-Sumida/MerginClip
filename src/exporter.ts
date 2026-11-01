@@ -3,8 +3,10 @@ import type { JSONContent } from '@tiptap/core';
 import { MAX_IMAGE_BYTES, errorText, type Note } from './types';
 import { imageDestination, safeFilename, safeImageUrl } from './url';
 
+export interface Bundle { files: Record<string, Uint8Array>; title: string; folder: string; savedAt: Date; warnings: string[] }
 export interface Archive { bytes: Uint8Array; filename: string; warnings: string[] }
 const extensions: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' };
+const mimeTypes: Record<string, string> = { ...Object.fromEntries(Object.entries(extensions).map(([type, ext]) => [ext, type])), md: 'text/markdown;charset=utf-8' };
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 
 function imageSources(doc: JSONContent): string[] {
@@ -57,7 +59,7 @@ function header(title: string, url: string, kind: 'article' | 'note', note: Note
   return `---\n${Object.entries(fields).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n')}\n---\n\n`;
 }
 
-export async function createArchive(note: Note, fetcher: typeof fetch = fetch): Promise<Archive> {
+export async function createBundle(note: Note, fetcher: typeof fetch = fetch): Promise<Bundle> {
   const savedAt = new Date();
   const pad = (value: number) => String(value).padStart(2, '0');
   const timestamp = `${savedAt.getFullYear()}${pad(savedAt.getMonth() + 1)}${pad(savedAt.getDate())}_${pad(savedAt.getHours())}${pad(savedAt.getMinutes())}${pad(savedAt.getSeconds())}`;
@@ -92,18 +94,36 @@ export async function createArchive(note: Note, fetcher: typeof fetch = fetch): 
   }
   files[`${basename}_article.md`] = strToU8(header(title, note.url, 'article', note, savedAt) + article + '\n');
   files[`${basename}_note.md`] = strToU8(header(note.title, note.url, 'note', note, savedAt) + markdown + '\n');
+  // Chrome renames conflicting files one by one, which would break assets/ references,
+  // so each export gets its own folder even for the same title within one second.
+  return { files, title: note.title, folder: `MarginClip/${basename}_${crypto.randomUUID().slice(0, 8)}`, savedAt, warnings };
+}
+
+export async function createArchive(note: Note, fetcher: typeof fetch = fetch): Promise<Archive> {
+  const { files, title, savedAt, warnings } = await createBundle(note, fetcher);
   // fflate's async ZIP spawns blob workers for large files, which MV3's CSP blocks.
   // Images are already compressed: store them directly and compress only text.
   const input: Zippable = {};
   for (const [path, bytes] of Object.entries(files)) input[path] = path.startsWith('assets/') ? [bytes, { level: 0 }] : bytes;
   const bytes = zipSync(input, { level: 6 });
-  return { bytes, filename: `MarginClip-${safeFilename(note.title)}-${savedAt.toISOString().slice(0, 10)}.zip`, warnings };
+  return { bytes, filename: `MarginClip-${safeFilename(title)}-${savedAt.toISOString().slice(0, 10)}.zip`, warnings };
 }
 
-export async function downloadBlob(blob: Blob, filename: string): Promise<number> {
+// The Downloads API cannot place several files in a user-chosen folder, so files go
+// into one subfolder of the Downloads directory, keeping assets/ next to the Markdown.
+export async function downloadBundle(bundle: Bundle): Promise<string> {
+  const paths = Object.keys(bundle.files).sort((a, b) => Number(a.startsWith('assets/')) - Number(b.startsWith('assets/')) || a.localeCompare(b));
+  for (const path of paths) {
+    const type = mimeTypes[path.slice(path.lastIndexOf('.') + 1)] || 'application/octet-stream';
+    await downloadBlob(new Blob([new Uint8Array(bundle.files[path])], { type }), `${bundle.folder}/${path}`, false);
+  }
+  return bundle.folder;
+}
+
+export async function downloadBlob(blob: Blob, filename: string, saveAs = true): Promise<number> {
   const url = URL.createObjectURL(blob);
   try {
-    const id = await chrome.downloads.download({ url, filename, saveAs: true });
+    const id = await chrome.downloads.download({ url, filename, saveAs });
     const dispose = () => { URL.revokeObjectURL(url); chrome.downloads.onChanged.removeListener(listener); clearTimeout(timeout); };
     const listener = (delta: chrome.downloads.DownloadDelta) => { if (delta.id === id && delta.state && delta.state.current !== 'in_progress') dispose(); };
     const timeout = setTimeout(dispose, 300000);

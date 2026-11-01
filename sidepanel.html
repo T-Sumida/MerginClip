@@ -48,7 +48,7 @@
         <div class="note-foot"><span id="word-count">0 文字</span><button id="help-toggle" class="subtle-button" aria-expanded="false">書き方のヒント</button></div>
         <div id="help" hidden><p><code># + 空白</code> で見出し、<code>- + 空白</code> でリスト、<code>&gt; + 空白</code> で引用。<code>**太字**</code>、<code>`コード`</code>、行頭の <code>```</code> も使えます。</p><p>Markdownの貼り付けで書式を反映。画像は Ctrl+V、ファイル選択、ドラッグ＆ドロップで追加できます。リンクは文字を選択して ↗ を押します。</p></div>
       </main>
-      <footer class="app-footer"><button id="export" class="primary-button" disabled><span>↓</span> 記事とメモを保存 <span class="zip-badge">ZIP</span></button><p>このブラウザに自動保存 · クラウド送信なし</p></footer>
+      <footer class="app-footer"><div class="section-label export-label">記事とメモを保存</div><div class="export-actions"><button id="export" class="primary-button" title="記事・メモ・画像を1つのZIPにまとめて保存" aria-label="記事とメモをZIPで保存" disabled><span aria-hidden="true">↓</span> ZIP</button><button id="export-files" class="secondary-button" title="ダウンロードフォルダ内のMarginClipフォルダへ、.mdとassetsをそのまま保存" aria-label="記事とメモをMarkdownと画像ファイルで保存" disabled><span aria-hidden="true">↓</span> .md + assets</button></div><p>このブラウザに自動保存 · クラウド送信なし</p></footer>
     </div>
     <dialog id="link-dialog"><form method="dialog"><h2>リンクを設定</h2><label for="link-input">URL</label><input id="link-input" type="url" placeholder="https://…" required /><p id="link-error" role="status"></p><div class="dialog-actions"><button value="cancel" formnovalidate>キャンセル</button><button id="link-remove" type="button">解除</button><button value="apply" class="primary-button">設定</button></div></form></dialog>
     <script type="module" src="/src/panel.ts"></script>
