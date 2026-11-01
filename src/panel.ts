@@ -1,7 +1,7 @@
 import type { Editor } from '@tiptap/core';
-import { backupJson, ConflictError, getNote, listNotes, newNote, parseBackup, putNote, restoreNotes, validateImage } from './db';
+import { backupJson, ConflictError, getExportDirectory, getNote, listNotes, newNote, parseBackup, putNote, restoreNotes, setExportDirectory, validateImage } from './db';
 import { createNoteEditor } from './editor';
-import { createArchive, createBundle, downloadBlob, downloadBundle } from './exporter';
+import { createArchive, createBundle, downloadBlob, downloadBundle, writeArchive, writeBundle } from './exporter';
 import { errorText, type Article, type Note } from './types';
 import { pageKey } from './url';
 import './panel.css';
@@ -14,6 +14,8 @@ function el<T extends HTMLElement = HTMLElement>(id: string): T {
 const exportButton = el<HTMLButtonElement>('export');
 const exportFilesButton = el<HTMLButtonElement>('export-files');
 const refreshButton = el<HTMLButtonElement>('refresh');
+const chooseDestinationButton = el<HTMLButtonElement>('destination-choose');
+const resetDestinationButton = el<HTMLButtonElement>('destination-reset');
 const imageInput = el<HTMLInputElement>('image-file');
 let editor: Editor | undefined;
 let note: Note | undefined;
@@ -30,6 +32,8 @@ let saveFailed = false;
 let exporting = false;
 let transitioning = false;
 let libraryNotes: Note[] = [];
+// A folder chosen by the user. Without one, exports go through chrome.downloads.
+let destination: FileSystemDirectoryHandle | undefined;
 
 function message(text: string, error = false) {
   el('message').textContent = text;
@@ -44,6 +48,7 @@ function saveStatus(text: string, state = '') {
 
 function controls() {
   exportButton.disabled = exportFilesButton.disabled = !note || exporting;
+  chooseDestinationButton.disabled = resetDestinationButton.disabled = exporting;
   refreshButton.disabled = !note || !following || currentTabId === undefined || transitioning;
   document.querySelectorAll<HTMLButtonElement>('#toolbar button').forEach(button => button.disabled = !editor || saveFailed || transitioning);
 }
@@ -294,30 +299,80 @@ dialog.querySelector('form')!.addEventListener('submit', event => {
 el('link-remove').addEventListener('click', () => { editor?.chain().focus().extendMarkRange('link').unsetLink().run(); dialog.close(); });
 imageInput.addEventListener('change', () => { addImages([...(imageInput.files ?? [])]); imageInput.value = ''; });
 
-async function exportNote(button: HTMLButtonElement, save: (snapshot: Note) => Promise<{ warnings: string[]; done: string }>) {
+function renderDestination() {
+  const name = el('destination-name');
+  name.textContent = destination ? destination.name : 'Chromeのダウンロード';
+  name.title = destination ? `選択したフォルダ「${destination.name}」へ直接保存します` : 'ZIPは保存ダイアログ、.md + assetsはダウンロード内のMarginClipフォルダへ保存します';
+  name.classList.toggle('custom', !!destination);
+  resetDestinationButton.hidden = !destination;
+  exportButton.title = destination ? `記事・メモ・画像を1つのZIPにまとめて「${destination.name}」へ保存` : '記事・メモ・画像を1つのZIPにまとめて保存';
+  exportFilesButton.title = destination ? `「${destination.name}」へ、.mdとassetsをそのまま保存` : 'ダウンロードフォルダ内のMarginClipフォルダへ、.mdとassetsをそのまま保存';
+}
+
+async function writable(directory: FileSystemDirectoryHandle) {
+  const mode = { mode: 'readwrite' } as const;
+  // After a browser restart Chrome asks again. The export click is the required user gesture.
+  if (await directory.queryPermission(mode) === 'granted' || await directory.requestPermission(mode) === 'granted') return;
+  throw new Error(`保存先フォルダ「${directory.name}」への書き込みが許可されませんでした`);
+}
+
+async function exportNote(button: HTMLButtonElement, save: (snapshot: Note, directory?: FileSystemDirectoryHandle) => Promise<{ warnings: string[]; done: string }>) {
   if (!note || exporting) return;
   const target = note;
   const label = button.innerHTML;
   exporting = true; controls(); button.textContent = '保存中…';
+  let directory: FileSystemDirectoryHandle | undefined;
   try {
+    // Re-read the setting so a folder changed in another window is used. Ask for
+    // permission before waiting for edits, while the click still counts as a gesture.
+    directory = destination = await getExportDirectory();
+    renderDestination();
+    if (directory) await writable(directory);
     await images; await saving; await extraction;
-    const result = await save(structuredClone(target));
+    const result = await save(structuredClone(target), directory);
     message(result.warnings.length ? `${result.done} 注意事項: ${result.warnings.join(' / ')}` : result.done);
-  } catch (error) { message(`保存に失敗しました: ${errorText(error)}。${saveFailed ? '保存できていない編集内容を退避してください。' : 'メモはこのブラウザに保持されています。'}`, true); }
+  } catch (error) {
+    const reason = directory && (error as DOMException)?.name === 'NotFoundError' ? `保存先フォルダ「${directory.name}」が見つかりません。移動・削除した場合は「変更」から選び直してください` : errorText(error);
+    message(`保存に失敗しました: ${reason}。${saveFailed ? '保存できていない編集内容を退避してください。' : 'メモはこのブラウザに保持されています。'}`, true);
+  }
   finally { exporting = false; button.innerHTML = label; controls(); }
 }
 
-exportButton.addEventListener('click', () => exportNote(exportButton, async snapshot => {
+exportButton.addEventListener('click', () => exportNote(exportButton, async (snapshot, directory) => {
   const archive = await createArchive(snapshot);
+  if (directory) return { warnings: archive.warnings, done: `「${directory.name}」に ${await writeArchive(directory, archive)} を保存しました。` };
   await downloadBlob(new Blob([new Uint8Array(archive.bytes)], { type: 'application/zip' }), archive.filename);
   return { warnings: archive.warnings, done: archive.warnings.length ? 'ZIPの保存を開始しました。' : 'ZIPの保存を開始しました。展開すると、記事・メモ・画像をまとめて使えます。' };
 }));
 
-exportFilesButton.addEventListener('click', () => exportNote(exportFilesButton, async snapshot => {
+exportFilesButton.addEventListener('click', () => exportNote(exportFilesButton, async (snapshot, directory) => {
   const bundle = await createBundle(snapshot);
+  if (directory) return { warnings: bundle.warnings, done: `「${directory.name}/${await writeBundle(directory, bundle)}」へMarkdownと画像を保存しました。` };
   const folder = await downloadBundle(bundle);
   return { warnings: bundle.warnings, done: `ダウンロードフォルダの「${folder}」へMarkdownと画像の保存を開始しました。` };
 }));
+
+chooseDestinationButton.addEventListener('click', async () => {
+  if (!window.showDirectoryPicker) { message('このChromeでは保存先フォルダを選べません。', true); return; }
+  try {
+    const handle = await window.showDirectoryPicker({ id: 'marginclip-export', mode: 'readwrite', startIn: destination ?? 'documents' });
+    await setExportDirectory(handle);
+    destination = handle;
+    renderDestination();
+    message(`保存先を「${handle.name}」に変更しました。ZIPと.md + assetsはこのフォルダへ直接保存します。`);
+  } catch (error) {
+    if ((error as DOMException)?.name !== 'AbortError') message(`保存先を変更できませんでした: ${errorText(error)}`, true);
+  }
+});
+
+resetDestinationButton.addEventListener('click', async () => {
+  try {
+    await setExportDirectory(undefined);
+    destination = undefined;
+    renderDestination();
+    message('保存先をChromeのダウンロードに戻しました。');
+  } catch (error) { message(`保存先を戻せませんでした: ${errorText(error)}`, true); }
+});
 
 el('backup').addEventListener('click', async () => {
   try {
@@ -364,6 +419,8 @@ el('recover').addEventListener('click', async () => {
 async function initialize() {
   if (!globalThis.chrome?.tabs || !chrome.scripting) throw new Error('ビルドしたdistフォルダをChrome拡張として読み込んでください。');
   windowId = (await chrome.windows.getCurrent()).id!;
+  destination = await getExportDirectory().catch(() => undefined);
+  renderDestination();
   chrome.tabs.onActivated.addListener(info => { if (info.windowId === windowId) navigate(() => syncActive()); });
   chrome.tabs.onUpdated.addListener((tabId, info) => {
     if (following && (info.url || info.status === 'complete') && (tabId === currentTabId || info.url)) navigate(async () => {

@@ -12,7 +12,7 @@ Manifest V3のChrome拡張です。service workerがアイコンとサイドパ�
 | `src/background.ts` | アイコンとサイドパネルの関連付け |
 | `src/panel.ts` | 対象ページ、編集・保存・メモ一覧・バックアップのUI |
 | `src/editor.ts` | Tiptap / ProseMirror、Markdown、画像と貼り付け |
-| `src/db.ts` | IndexedDB、リビジョンによる競合検知、バックアップ検証 |
+| `src/db.ts` | IndexedDB、リビジョンによる競合検知、バックアップ検証、保存先フォルダの設定 |
 | `src/extractor.ts` | Readabilityによる本文抽出、HTMLの無害化、Markdown変換 |
 | `src/exporter.ts` | 画像参照の処理、ZIP生成・個別ファイル保存、Chromeのダウンロード |
 | `src/url.ts` | URLキーと安全なファイル名 |
@@ -21,7 +21,7 @@ Manifest V3のChrome拡張です。service workerがアイコンとサイドパ�
 
 ## データモデルと保存
 
-IndexedDB `marginclip`（version 1）の `notes` ストアに、URLキー、元URL、タイトル、エディタJSON、Markdown、更新日時、リビジョン、記事取得結果を保存します。貼り付け画像はdata URLとしてエディタJSONに含めます。型定義は `src/types.ts`、バックアップ検証は `src/db.ts` が管理します。
+IndexedDB `marginclip`（version 2）の `notes` ストアに、URLキー、元URL、タイトル、エディタJSON、Markdown、更新日時、リビジョン、記事取得結果を保存します。貼り付け画像はdata URLとしてエディタJSONに含めます。型定義は `src/types.ts`、バックアップ検証は `src/db.ts` が管理します。`settings` ストア（version 2で追加）には、ユーザーが選んだ保存先フォルダの `FileSystemDirectoryHandle` を `exportDirectory` キーで保存します。ハンドルは `chrome.storage` に保存できないため、IndexedDBを使います。
 
 URLキーはHTTP／HTTPS URLからフラグメントを除いたものです。クエリ、順序、末尾のスラッシュは保持します。追跡用パラメータは自動で削除しません。
 
@@ -45,7 +45,7 @@ URLキーはHTTP／HTTPS URLからフラグメントを除いたものです。�
 
 画像取得は認証・Cookie・リファラーなしで行い、サイズ、枚数、時間、全体サイズに上限を設けます。取得できないリモート画像は元参照を残して警告し、貼り付け画像の同梱失敗は保存エラーにします。上限の値は[ユーザーガイド](user-guide.md#記事とメモを保存)に記載しています。
 
-ZIPはfflateの同期処理で生成します。Manifest V3のCSPで禁止されるblob workerを使わないためです。個別ファイル保存では、`chrome.downloads` が複数ファイルの保存先フォルダ選択に対応しないため、ダウンロードフォルダ内の `MarginClip/{日時}_{記事タイトル}_{ID}/` へ保存ダイアログなしで保存し、`assets/` への相対参照を保ちます。Chromeは名前が衝突したファイルを1件ずつ改名するため、同じ秒に同じタイトルを保存しても画像の参照先が入れ替わらないよう、フォルダ名に保存ごとのランダムなIDを付けます。どちらの形式にもREADMEやmetadataファイルは含めません。
+ZIPはfflateの同期処理で生成します。Manifest V3のCSPで禁止されるblob workerを使わないためです。個別ファイル保存では、`chrome.downloads` が複数ファイルの保存先フォルダ選択に対応しないため、ダウンロードフォルダ内の `MarginClip/{日時}_{記事タイトル}_{ID}/` へ保存ダイアログなしで保存し、`assets/` への相対参照を保ちます。Chromeは名前が衝突したファイルを1件ずつ改名するため、同じ秒に同じタイトルを保存しても画像の参照先が入れ替わらないよう、フォルダ名に保存ごとのランダムなIDを付けます。保存先フォルダが設定されている場合は `chrome.downloads` を使わず、File System Access APIで選択フォルダへ直接書き込みます（`writeArchive`、`writeBundle`）。書き込み許可はクリック直後、編集内容の保存待ちより前に確認・要求し、ユーザー操作の有効期間内に許可ダイアログを出します。既存の名前を検出できるため、ランダムなIDではなく `_2` などの連番で衝突を避けます。別ウィンドウのパネルが同時に同じフォルダへ保存しても同じ名前を選ばないよう、空き名の探索からファイル・フォルダの作成までをWeb Locks（`marginclip-export-name`）で直列化します。作成後は名前が使用中になるため、内容の書き込みはロックの外で行います。どちらの形式にもREADMEやmetadataファイルは含めません。
 
 ## 入力と実行環境
 
