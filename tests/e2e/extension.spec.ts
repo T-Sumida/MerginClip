@@ -182,10 +182,11 @@ test('downloads Markdown and note images as separate files into one folder', asy
   } finally { panel.off('download', listener); }
   const requested = await panel.evaluate(() => (globalThis as unknown as { requested: string[] }).requested);
   const folder = requested[0].split('/').slice(0, 2).join('/');
-  expect(folder).toMatch(/^MarginClip\/\d{8}_\d{6}_読書の記事 A$/);
+  expect(folder).toMatch(/^MarginClip\/\d{8}_\d{6}_読書の記事 A_[0-9a-f]{8}$/);
+  const basename = folder.slice('MarginClip/'.length, -'_00000000'.length);
   expect(requested).toEqual([
-    expect.stringMatching(new RegExp(`^${folder}/\d{8}_\d{6}_読書の記事 A_article\.md\|false$`)),
-    expect.stringMatching(new RegExp(`^${folder}/\d{8}_\d{6}_読書の記事 A_note\.md\|false$`)),
+    `${folder}/${basename}_article.md|false`,
+    `${folder}/${basename}_note.md|false`,
     `${folder}/assets/image-001.png|false`,
   ]);
   const files = await Promise.all(downloads.map(async download => readFile((await download.path())!)));

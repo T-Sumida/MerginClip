@@ -94,7 +94,9 @@ export async function createBundle(note: Note, fetcher: typeof fetch = fetch): P
   }
   files[`${basename}_article.md`] = strToU8(header(title, note.url, 'article', note, savedAt) + article + '\n');
   files[`${basename}_note.md`] = strToU8(header(note.title, note.url, 'note', note, savedAt) + markdown + '\n');
-  return { files, title: note.title, folder: `MarginClip/${basename}`, savedAt, warnings };
+  // Chrome renames conflicting files one by one, which would break assets/ references,
+  // so each export gets its own folder even for the same title within one second.
+  return { files, title: note.title, folder: `MarginClip/${basename}_${crypto.randomUUID().slice(0, 8)}`, savedAt, warnings };
 }
 
 export async function createArchive(note: Note, fetcher: typeof fetch = fetch): Promise<Archive> {

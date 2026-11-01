@@ -19,4 +19,4 @@
 - メモ画像は必要に応じて `assets/` に同梱。
 - Markdown名は `{YYYYMMDD_HHmmss}_{記事タイトル}_{article|note}.md`。
 - 記事・メモのZIPには `README.txt` と `metadata.json` を含めない。
-- ZIPのほか、`.md` と `assets/` をダウンロードフォルダ内の `MarginClip/{YYYYMMDD_HHmmss}_{記事タイトル}/` へ個別ファイルとして保存できる。
+- ZIPのほか、`.md` と `assets/` をダウンロードフォルダ内の `MarginClip/{YYYYMMDD_HHmmss}_{記事タイトル}_{ID}/` へ個別ファイルとして保存できる。

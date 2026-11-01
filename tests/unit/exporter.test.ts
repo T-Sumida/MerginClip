@@ -112,7 +112,8 @@ it('saves the same Markdown and assets as separate files in one Downloads subfol
   note.markdown = `![貼付](${src})`;
   const fetcher = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } })) as unknown as typeof fetch;
   const bundle = await createBundle(note, fetcher);
-  expect(bundle.folder).toMatch(/^MarginClip\/\d{8}_\d{6}_記事-個別保存$/);
+  expect(bundle.folder).toMatch(/^MarginClip\/\d{8}_\d{6}_記事-個別保存_[0-9a-f]{8}$/);
+  expect((await createBundle(note, fetcher)).folder).not.toBe(bundle.folder);
   const download = vi.fn(async (_options: chrome.downloads.DownloadOptions) => download.mock.calls.length);
   vi.stubGlobal('chrome', { downloads: { download, onChanged: { addListener: vi.fn(), removeListener: vi.fn() } } });
   try {
