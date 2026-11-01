@@ -134,27 +134,38 @@ async function freeName(directory: FileSystemDirectoryHandle, stem: string, ext 
   throw new Error('同じ名前のファイルが多すぎます。');
 }
 
-async function writeFile(directory: FileSystemDirectoryHandle, path: string, bytes: Uint8Array) {
-  const parts = path.split('/');
-  let parent = directory;
-  for (const part of parts.slice(0, -1)) parent = await parent.getDirectoryHandle(part, { create: true });
-  const writable = await (await parent.getFileHandle(parts.at(-1)!, { create: true })).createWritable();
+// Panels in other windows share this origin and may export into the same folder.
+// Finding a free name and creating the entry must not interleave, or both exports
+// could take the same name. Once created, the name is visibly taken, so writing
+// the contents can happen outside the lock.
+async function reserve<T>(create: () => Promise<T>): Promise<T> {
+  return await navigator.locks.request('marginclip-export-name', create);
+}
+
+async function writeTo(file: FileSystemFileHandle, bytes: Uint8Array) {
+  const writable = await file.createWritable();
   try { await writable.write(new Uint8Array(bytes)); await writable.close(); }
   catch (error) { await writable.abort().catch(() => undefined); throw error; }
 }
 
+async function writeFile(directory: FileSystemDirectoryHandle, path: string, bytes: Uint8Array) {
+  const parts = path.split('/');
+  let parent = directory;
+  for (const part of parts.slice(0, -1)) parent = await parent.getDirectoryHandle(part, { create: true });
+  await writeTo(await parent.getFileHandle(parts.at(-1)!, { create: true }), bytes);
+}
+
 // Writes into a folder the user chose with the File System Access API.
 export async function writeArchive(directory: FileSystemDirectoryHandle, archive: Archive): Promise<string> {
-  const name = await freeName(directory, archive.filename.replace(/\.zip$/, ''), '.zip');
-  await writeFile(directory, name, archive.bytes);
-  return name;
+  const file = await reserve(async () => directory.getFileHandle(await freeName(directory, archive.filename.replace(/\.zip$/, ''), '.zip'), { create: true }));
+  await writeTo(file, archive.bytes);
+  return file.name;
 }
 
 export async function writeBundle(directory: FileSystemDirectoryHandle, bundle: Bundle): Promise<string> {
-  const folder = await freeName(directory, bundle.basename);
-  const target = await directory.getDirectoryHandle(folder, { create: true });
+  const target = await reserve(async () => directory.getDirectoryHandle(await freeName(directory, bundle.basename), { create: true }));
   for (const [path, bytes] of Object.entries(bundle.files)) await writeFile(target, path, bytes);
-  return folder;
+  return target.name;
 }
 
 export async function downloadBlob(blob: Blob, filename: string, saveAs = true): Promise<number> {

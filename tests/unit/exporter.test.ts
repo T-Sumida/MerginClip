@@ -152,7 +152,9 @@ class MemoryDirectory {
     const entry = this.entries.get(name);
     if (entry instanceof MemoryDirectory) throw new DOMException('directory', 'TypeMismatchError');
     if (!entry && !options?.create) throw new DOMException('missing', 'NotFoundError');
-    return { createWritable: async () => {
+    // Like the real API, creating a handle creates an empty file right away.
+    if (!entry) this.entries.set(name, new Uint8Array());
+    return { kind: 'file', name, createWritable: async () => {
       let data: Uint8Array = new Uint8Array();
       return { write: async (bytes: Uint8Array) => { data = bytes; }, close: async () => { this.entries.set(name, data); }, abort: async () => undefined };
     } };
@@ -186,4 +188,19 @@ it('writes Markdown, assets and ZIPs directly into a chosen folder without overw
   expect(await writeArchive(handle, archive)).toBe(archive.filename);
   expect(await writeArchive(handle, archive)).toBe(archive.filename.replace(/\.zip$/, '_2.zip'));
   expect(Object.keys(unzipSync(directory.file(archive.filename)))).toContain('assets/image-001.png');
+});
+
+it('gives simultaneous exports into the same folder different names', async () => {
+  const note = newNote('https://example.com/read', '同時保存');
+  const fetcher = vi.fn() as unknown as typeof fetch;
+  const directory = new MemoryDirectory('notes-repo');
+  const handle = directory as unknown as FileSystemDirectoryHandle;
+  // Panels in two windows export the same note at the same second.
+  const bundle = await createBundle(note, fetcher);
+  const archive = await createArchive(note, fetcher);
+  const folders = await Promise.all([writeBundle(handle, bundle), writeBundle(handle, bundle)]);
+  const zips = await Promise.all([writeArchive(handle, archive), writeArchive(handle, archive)]);
+  expect(new Set(folders).size).toBe(2);
+  expect(new Set(zips).size).toBe(2);
+  for (const zip of zips) expect(Object.keys(unzipSync(directory.file(zip)))).toHaveLength(2);
 });
