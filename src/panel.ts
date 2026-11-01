@@ -1,7 +1,7 @@
 import type { Editor } from '@tiptap/core';
 import { backupJson, ConflictError, getNote, listNotes, newNote, parseBackup, putNote, restoreNotes, validateImage } from './db';
 import { createNoteEditor } from './editor';
-import { createArchive, downloadBlob } from './exporter';
+import { createArchive, createBundle, downloadBlob, downloadBundle } from './exporter';
 import { errorText, type Article, type Note } from './types';
 import { pageKey } from './url';
 import './panel.css';
@@ -12,6 +12,7 @@ function el<T extends HTMLElement = HTMLElement>(id: string): T {
   return element as T;
 }
 const exportButton = el<HTMLButtonElement>('export');
+const exportFilesButton = el<HTMLButtonElement>('export-files');
 const refreshButton = el<HTMLButtonElement>('refresh');
 const imageInput = el<HTMLInputElement>('image-file');
 let editor: Editor | undefined;
@@ -42,7 +43,7 @@ function saveStatus(text: string, state = '') {
 }
 
 function controls() {
-  exportButton.disabled = !note || exporting;
+  exportButton.disabled = exportFilesButton.disabled = !note || exporting;
   refreshButton.disabled = !note || !following || currentTabId === undefined || transitioning;
   document.querySelectorAll<HTMLButtonElement>('#toolbar button').forEach(button => button.disabled = !editor || saveFailed || transitioning);
 }
@@ -293,19 +294,30 @@ dialog.querySelector('form')!.addEventListener('submit', event => {
 el('link-remove').addEventListener('click', () => { editor?.chain().focus().extendMarkRange('link').unsetLink().run(); dialog.close(); });
 imageInput.addEventListener('change', () => { addImages([...(imageInput.files ?? [])]); imageInput.value = ''; });
 
-exportButton.addEventListener('click', async () => {
+async function exportNote(button: HTMLButtonElement, save: (snapshot: Note) => Promise<{ warnings: string[]; done: string }>) {
   if (!note || exporting) return;
   const target = note;
-  exporting = true; controls(); exportButton.textContent = '画像とMarkdownをまとめています…';
+  const label = button.innerHTML;
+  exporting = true; controls(); button.textContent = '保存中…';
   try {
     await images; await saving; await extraction;
-    const snapshot = structuredClone(target);
-    const archive = await createArchive(snapshot);
-    await downloadBlob(new Blob([new Uint8Array(archive.bytes)], { type: 'application/zip' }), archive.filename);
-    message(archive.warnings.length ? `ZIPの保存を開始しました。注意事項: ${archive.warnings.join(' / ')}` : 'ZIPの保存を開始しました。展開すると、記事・メモ・画像をまとめて使えます。');
+    const result = await save(structuredClone(target));
+    message(result.warnings.length ? `${result.done} 注意事項: ${result.warnings.join(' / ')}` : result.done);
   } catch (error) { message(`保存に失敗しました: ${errorText(error)}。${saveFailed ? '保存できていない編集内容を退避してください。' : 'メモはこのブラウザに保持されています。'}`, true); }
-  finally { exporting = false; exportButton.textContent = '↓ 記事とメモを保存（ZIP）'; controls(); }
-});
+  finally { exporting = false; button.innerHTML = label; controls(); }
+}
+
+exportButton.addEventListener('click', () => exportNote(exportButton, async snapshot => {
+  const archive = await createArchive(snapshot);
+  await downloadBlob(new Blob([new Uint8Array(archive.bytes)], { type: 'application/zip' }), archive.filename);
+  return { warnings: archive.warnings, done: archive.warnings.length ? 'ZIPの保存を開始しました。' : 'ZIPの保存を開始しました。展開すると、記事・メモ・画像をまとめて使えます。' };
+}));
+
+exportFilesButton.addEventListener('click', () => exportNote(exportFilesButton, async snapshot => {
+  const bundle = await createBundle(snapshot);
+  const folder = await downloadBundle(bundle);
+  return { warnings: bundle.warnings, done: `ダウンロードフォルダの「${folder}」へMarkdownと画像の保存を開始しました。` };
+}));
 
 el('backup').addEventListener('click', async () => {
   try {

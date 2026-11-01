@@ -14,7 +14,7 @@ Manifest V3のChrome拡張です。service workerがアイコンとサイドパ�
 | `src/editor.ts` | Tiptap / ProseMirror、Markdown、画像と貼り付け |
 | `src/db.ts` | IndexedDB、リビジョンによる競合検知、バックアップ検証 |
 | `src/extractor.ts` | Readabilityによる本文抽出、HTMLの無害化、Markdown変換 |
-| `src/exporter.ts` | 画像参照の処理、ZIP生成、Chromeのダウンロード |
+| `src/exporter.ts` | 画像参照の処理、ZIP生成・個別ファイル保存、Chromeのダウンロード |
 | `src/url.ts` | URLキーと安全なファイル名 |
 | `scripts/build.mjs` | パネル・worker・抽出コード・アイコン・ライセンスのビルド |
 | `scripts/package.mjs` | 拡張とガイドを配布ZIPへまとめる |
@@ -39,13 +39,13 @@ URLキーはHTTP／HTTPS URLからフラグメントを除いたものです。�
 
 ## 書き出し
 
-記事とメモは独立したMarkdownとして1つのZIPに保存します。名前は `{YYYYMMDD_HHmmss}_{記事タイトル}_{article|note}.md` で、保存開始時のローカル日時を共通で使用します。記事を取得できない場合はメモのページタイトルを使います。ページ情報と保存日時はMarkdownのfrontmatterに記録します。
+記事とメモは独立したMarkdownとして書き出します。`createBundle` が書き出すファイル一式を作り、ZIP保存（`createArchive`）と個別ファイル保存（`downloadBundle`）で共有します。名前は `{YYYYMMDD_HHmmss}_{記事タイトル}_{article|note}.md` で、保存開始時のローカル日時を共通で使用します。記事を取得できない場合はメモのページタイトルを使います。ページ情報と保存日時はMarkdownのfrontmatterに記録します。
 
 記事画像は元URLを保持し、ダウンロードしません。メモの貼り付け画像は `assets/` に同梱し、メモのリモート画像は取得可能なものだけ相対参照へ置き換えます。同じURLが記事とメモにある場合も、置き換えはメモ側に限ります。
 
 画像取得は認証・Cookie・リファラーなしで行い、サイズ、枚数、時間、全体サイズに上限を設けます。取得できないリモート画像は元参照を残して警告し、貼り付け画像の同梱失敗は保存エラーにします。上限の値は[ユーザーガイド](user-guide.md#記事とメモを保存)に記載しています。
 
-ZIPはfflateの同期処理で生成します。Manifest V3のCSPで禁止されるblob workerを使わないためです。記事・メモのZIPにREADMEやmetadataファイルは含めません。
+ZIPはfflateの同期処理で生成します。Manifest V3のCSPで禁止されるblob workerを使わないためです。個別ファイル保存では、`chrome.downloads` が複数ファイルの保存先フォルダ選択に対応しないため、ダウンロードフォルダ内の `MarginClip/{日時}_{記事タイトル}/` へ保存ダイアログなしで保存し、`assets/` への相対参照を保ちます。どちらの形式にもREADMEやmetadataファイルは含めません。
 
 ## 入力と実行環境
 

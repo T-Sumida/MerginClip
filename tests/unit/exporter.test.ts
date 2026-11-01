@@ -1,6 +1,6 @@
 import { strFromU8, unzipSync } from 'fflate';
 import { expect, it, vi } from 'vitest';
-import { createArchive } from '../../src/exporter';
+import { createArchive, createBundle, downloadBundle } from '../../src/exporter';
 import { newNote } from '../../src/db';
 
 function markdownFile(files: Record<string, Uint8Array>, kind: 'note' | 'article'): Uint8Array {
@@ -103,4 +103,32 @@ it('uses one local save timestamp and a safe shared article title, without extra
     expect(Object.keys(files).sort()).toEqual(['20261010_010203_記事-タイトル-例_article.md', '20261010_010203_記事-タイトル-例_note.md']);
     for (const bytes of Object.values(files)) expect(strFromU8(bytes)).toContain(`saved_at: "${savedAt.toISOString()}"`);
   } finally { vi.useRealTimers(); }
+});
+
+it('saves the same Markdown and assets as separate files in one Downloads subfolder', async () => {
+  const note = newNote('https://example.com/read', '記事:個別保存');
+  const src = 'data:image/png;base64,aGVsbG8=';
+  note.doc = { type: 'doc', content: [{ type: 'image', attrs: { src } }] };
+  note.markdown = `![貼付](${src})`;
+  const fetcher = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } })) as unknown as typeof fetch;
+  const bundle = await createBundle(note, fetcher);
+  expect(bundle.folder).toMatch(/^MarginClip\/\d{8}_\d{6}_記事-個別保存$/);
+  const download = vi.fn(async (_options: chrome.downloads.DownloadOptions) => download.mock.calls.length);
+  vi.stubGlobal('chrome', { downloads: { download, onChanged: { addListener: vi.fn(), removeListener: vi.fn() } } });
+  try {
+    expect(await downloadBundle(bundle)).toBe(bundle.folder);
+  } finally { vi.unstubAllGlobals(); }
+  const options = download.mock.calls.map(([value]) => value);
+  expect(options.map(value => value.filename)).toEqual([
+    expect.stringMatching(/_article\.md$/),
+    expect.stringMatching(/_note\.md$/),
+    `${bundle.folder}/assets/image-001.png`,
+  ]);
+  for (const value of options) {
+    expect(value.filename!.startsWith(`${bundle.folder}/`)).toBe(true);
+    expect(value.saveAs).toBe(false);
+  }
+  expect(strFromU8(bundle.files[options[1].filename!.slice(bundle.folder.length + 1)])).toContain('![貼付](assets/image-001.png)');
+  const archive = unzipSync((await createArchive(note, fetcher)).bytes);
+  expect(Object.keys(archive).map(path => path.replace(/^\d{8}_\d{6}_/, '')).sort()).toEqual(Object.keys(bundle.files).map(path => path.replace(/^\d{8}_\d{6}_/, '')).sort());
 });
