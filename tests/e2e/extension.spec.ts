@@ -199,6 +199,58 @@ test('downloads Markdown and note images as separate files into one folder', asy
   await expect(panel.locator('#export-files')).toHaveText('↓ .md + assets');
 });
 
+test('saves exports directly into a chosen folder and can return to Downloads', async () => {
+  await expect(panel.locator('#destination-name')).toHaveText('Chromeのダウンロード');
+  await expect(panel.locator('#destination-reset')).toBeHidden();
+  // The native folder picker cannot be driven by Playwright. An origin-private folder
+  // is a real FileSystemDirectoryHandle that IndexedDB can persist the same way.
+  await panel.evaluate(() => {
+    window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle('notes-repo', { create: true });
+  });
+  await panel.locator('#destination-choose').click();
+  await expect(panel.locator('#destination-name')).toHaveText('notes-repo');
+  await panel.reload();
+  await activate(article);
+  await expect(panel.locator('#destination-name')).toHaveText('notes-repo');
+  await expect(panel.locator('#page-title')).toHaveText('読書の記事 A');
+  let downloads = 0;
+  const listener = () => { downloads++; };
+  panel.on('download', listener);
+  try {
+    await panel.locator('#export-files').click();
+    await expect(panel.locator('#message')).toContainText('Markdownと画像を保存しました');
+    await panel.locator('#export').click();
+    await expect(panel.locator('#message')).toContainText('.zip を保存しました');
+  } finally { panel.off('download', listener); }
+  expect(downloads).toBe(0);
+  const saved = await panel.evaluate(async () => {
+    const root = await (await navigator.storage.getDirectory()).getDirectoryHandle('notes-repo');
+    const list = async (directory: FileSystemDirectoryHandle, prefix = ''): Promise<Record<string, string>> => {
+      const result: Record<string, string> = {};
+      for await (const [name, handle] of (directory as unknown as AsyncIterable<[string, FileSystemHandle]>)) {
+        if (handle.kind === 'directory') Object.assign(result, await list(handle as FileSystemDirectoryHandle, `${prefix}${name}/`));
+        else result[`${prefix}${name}`] = name.endsWith('.md') ? await (await (handle as FileSystemFileHandle).getFile()).text() : String((await (handle as FileSystemFileHandle).getFile()).size);
+      }
+      return result;
+    };
+    return list(root);
+  });
+  const paths = Object.keys(saved);
+  expect(paths).toHaveLength(4);
+  expect(paths).toEqual(expect.arrayContaining([
+    expect.stringMatching(/^MarginClip-読書の記事 A-\d{4}-\d{2}-\d{2}\.zip$/),
+    expect.stringMatching(/^\d{8}_\d{6}_読書の記事 A\/\d{8}_\d{6}_読書の記事 A_article\.md$/),
+    expect.stringMatching(/^\d{8}_\d{6}_読書の記事 A\/\d{8}_\d{6}_読書の記事 A_note\.md$/),
+    expect.stringMatching(/^\d{8}_\d{6}_読書の記事 A\/assets\/image-001\.png$/),
+  ]));
+  const note = Object.entries(saved).find(([path]) => path.endsWith('_note.md'))![1];
+  expect(note).toContain('# 読書メモ');
+  expect(note).toContain('assets/image-001.png');
+  await panel.locator('#destination-reset').click();
+  await expect(panel.locator('#destination-name')).toHaveText('Chromeのダウンロード');
+  await expect(panel.locator('#destination-reset')).toBeHidden();
+});
+
 test('opens saved notes without following navigation and supports backup and merge restore', async () => {
   await panel.locator('#library-toggle').click();
   await expect(panel.locator('#note-count')).toHaveText('2');

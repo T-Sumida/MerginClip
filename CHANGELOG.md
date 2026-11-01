@@ -20,3 +20,4 @@
 - Markdown名は `{YYYYMMDD_HHmmss}_{記事タイトル}_{article|note}.md`。
 - 記事・メモのZIPには `README.txt` と `metadata.json` を含めない。
 - ZIPのほか、`.md` と `assets/` をダウンロードフォルダ内の `MarginClip/{YYYYMMDD_HHmmss}_{記事タイトル}_{ID}/` へ個別ファイルとして保存できる。
+- 保存先フォルダを設定でき、ZIPと `.md` + `assets/` をリポジトリなど任意のフォルダへ保存ダイアログなしで直接保存できる。既存のファイルは上書きせず連番を付ける。

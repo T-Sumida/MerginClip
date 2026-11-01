@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backupJson, ConflictError, getNote, newNote, parseBackup, putNote, restoreNotes, validateImage } from '../../src/db';
+import { backupJson, ConflictError, getExportDirectory, getNote, newNote, parseBackup, putNote, restoreNotes, setExportDirectory, validateImage } from '../../src/db';
 import { pageKey, safeFilename } from '../../src/url';
 
 describe('URL identity and filesystem portability', () => {
@@ -56,5 +56,28 @@ describe('autosave, conflict detection and backup', () => {
   it('rejects oversized or unsupported pasted files', () => {
     expect(() => validateImage(new File(['x'], 'vector.svg', { type: 'image/svg+xml' }))).toThrow();
     expect(() => validateImage(new File([new Uint8Array(8 * 1024 * 1024 + 1)], 'big.png', { type: 'image/png' }))).toThrow();
+  });
+});
+
+describe('export destination setting', () => {
+  it('stores and clears the chosen folder', async () => {
+    expect(await getExportDirectory()).toBeUndefined();
+    await setExportDirectory({ kind: 'directory', name: 'notes-repo' } as FileSystemDirectoryHandle);
+    expect((await getExportDirectory())?.name).toBe('notes-repo');
+    await setExportDirectory(undefined);
+    expect(await getExportDirectory()).toBeUndefined();
+  });
+  it('upgrades a version 1 database without losing notes', async () => {
+    const note = newNote('https://example.com/old', '旧メモ');
+    // Deleting closes the cached connection through its versionchange handler.
+    await new Promise((resolve, reject) => { const request = indexedDB.deleteDatabase('marginclip'); request.onsuccess = resolve; request.onerror = () => reject(request.error); });
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open('marginclip', 1);
+      request.onupgradeneeded = () => request.result.createObjectStore('notes', { keyPath: 'key' }).put({ ...note, revision: 1 });
+      request.onsuccess = () => { request.result.close(); resolve(); };
+      request.onerror = () => reject(request.error);
+    });
+    expect((await getNote(note.key))?.title).toBe('旧メモ');
+    expect(await getExportDirectory()).toBeUndefined();
   });
 });

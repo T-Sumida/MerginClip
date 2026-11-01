@@ -6,9 +6,16 @@ import { pageKey, safeImageUrl } from './url';
 let database: Promise<IDBDatabase> | undefined;
 export function openDatabase(): Promise<IDBDatabase> {
   return database ??= new Promise((resolve, reject) => {
-    const request = indexedDB.open('marginclip', 1);
-    request.onupgradeneeded = () => request.result.createObjectStore('notes', { keyPath: 'key' });
-    request.onsuccess = () => resolve(request.result);
+    const request = indexedDB.open('marginclip', 2);
+    request.onupgradeneeded = event => {
+      if (event.oldVersion < 1) request.result.createObjectStore('notes', { keyPath: 'key' });
+      if (event.oldVersion < 2) request.result.createObjectStore('settings');
+    };
+    request.onsuccess = () => {
+      // Let a newer panel upgrade the schema after an extension update.
+      request.result.onversionchange = () => { request.result.close(); database = undefined; };
+      resolve(request.result);
+    };
     request.onerror = () => reject(request.error);
     request.onblocked = () => reject(new Error('別のMarginClipを閉じて再度お試しください。'));
   });
@@ -53,6 +60,30 @@ export async function putNote(note: Note, expectedRevision: number): Promise<Not
     transaction.oncomplete = () => resolve(saved);
     transaction.onabort = () => reject(conflict ? new ConflictError() : transaction.error ?? new Error('保存が中断されました。'));
     transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+// The export folder handle is stored as-is: IndexedDB can keep it, chrome.storage cannot.
+const EXPORT_DIRECTORY = 'exportDirectory';
+
+export async function getExportDirectory(): Promise<FileSystemDirectoryHandle | undefined> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction('settings').objectStore('settings').get(EXPORT_DIRECTORY);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function setExportDirectory(handle: FileSystemDirectoryHandle | undefined): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('settings', 'readwrite');
+    const store = tx.objectStore('settings');
+    if (handle) store.put(handle, EXPORT_DIRECTORY); else store.delete(EXPORT_DIRECTORY);
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error ?? new Error('保存先の設定が中断されました。'));
+    tx.onerror = () => reject(tx.error);
   });
 }
 

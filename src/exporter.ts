@@ -3,7 +3,7 @@ import type { JSONContent } from '@tiptap/core';
 import { MAX_IMAGE_BYTES, errorText, type Note } from './types';
 import { imageDestination, safeFilename, safeImageUrl } from './url';
 
-export interface Bundle { files: Record<string, Uint8Array>; title: string; folder: string; savedAt: Date; warnings: string[] }
+export interface Bundle { files: Record<string, Uint8Array>; title: string; basename: string; folder: string; savedAt: Date; warnings: string[] }
 export interface Archive { bytes: Uint8Array; filename: string; warnings: string[] }
 const extensions: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' };
 const mimeTypes: Record<string, string> = { ...Object.fromEntries(Object.entries(extensions).map(([type, ext]) => [ext, type])), md: 'text/markdown;charset=utf-8' };
@@ -96,7 +96,7 @@ export async function createBundle(note: Note, fetcher: typeof fetch = fetch): P
   files[`${basename}_note.md`] = strToU8(header(note.title, note.url, 'note', note, savedAt) + markdown + '\n');
   // Chrome renames conflicting files one by one, which would break assets/ references,
   // so each export gets its own folder even for the same title within one second.
-  return { files, title: note.title, folder: `MarginClip/${basename}_${crypto.randomUUID().slice(0, 8)}`, savedAt, warnings };
+  return { files, title: note.title, basename, folder: `MarginClip/${basename}_${crypto.randomUUID().slice(0, 8)}`, savedAt, warnings };
 }
 
 export async function createArchive(note: Note, fetcher: typeof fetch = fetch): Promise<Archive> {
@@ -118,6 +118,43 @@ export async function downloadBundle(bundle: Bundle): Promise<string> {
     await downloadBlob(new Blob([new Uint8Array(bundle.files[path])], { type }), `${bundle.folder}/${path}`, false);
   }
   return bundle.folder;
+}
+
+// Picks `name`, `name_2`, … so a chosen folder never has existing files overwritten.
+async function freeName(directory: FileSystemDirectoryHandle, stem: string, ext = ''): Promise<string> {
+  for (let i = 1; i < 1000; i++) {
+    const candidate = `${stem}${i === 1 ? '' : `_${i}`}${ext}`;
+    try { await directory.getFileHandle(candidate); }
+    catch (error) {
+      if ((error as DOMException).name === 'NotFoundError') return candidate;
+      // A folder with that name exists.
+      if ((error as DOMException).name !== 'TypeMismatchError') throw error;
+    }
+  }
+  throw new Error('同じ名前のファイルが多すぎます。');
+}
+
+async function writeFile(directory: FileSystemDirectoryHandle, path: string, bytes: Uint8Array) {
+  const parts = path.split('/');
+  let parent = directory;
+  for (const part of parts.slice(0, -1)) parent = await parent.getDirectoryHandle(part, { create: true });
+  const writable = await (await parent.getFileHandle(parts.at(-1)!, { create: true })).createWritable();
+  try { await writable.write(new Uint8Array(bytes)); await writable.close(); }
+  catch (error) { await writable.abort().catch(() => undefined); throw error; }
+}
+
+// Writes into a folder the user chose with the File System Access API.
+export async function writeArchive(directory: FileSystemDirectoryHandle, archive: Archive): Promise<string> {
+  const name = await freeName(directory, archive.filename.replace(/\.zip$/, ''), '.zip');
+  await writeFile(directory, name, archive.bytes);
+  return name;
+}
+
+export async function writeBundle(directory: FileSystemDirectoryHandle, bundle: Bundle): Promise<string> {
+  const folder = await freeName(directory, bundle.basename);
+  const target = await directory.getDirectoryHandle(folder, { create: true });
+  for (const [path, bytes] of Object.entries(bundle.files)) await writeFile(target, path, bytes);
+  return folder;
 }
 
 export async function downloadBlob(blob: Blob, filename: string, saveAs = true): Promise<number> {

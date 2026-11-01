@@ -1,6 +1,6 @@
 import { strFromU8, unzipSync } from 'fflate';
 import { expect, it, vi } from 'vitest';
-import { createArchive, createBundle, downloadBundle } from '../../src/exporter';
+import { createArchive, createBundle, downloadBundle, writeArchive, writeBundle } from '../../src/exporter';
 import { newNote } from '../../src/db';
 
 function markdownFile(files: Record<string, Uint8Array>, kind: 'note' | 'article'): Uint8Array {
@@ -132,4 +132,58 @@ it('saves the same Markdown and assets as separate files in one Downloads subfol
   expect(strFromU8(bundle.files[options[1].filename!.slice(bundle.folder.length + 1)])).toContain('![貼付](assets/image-001.png)');
   const archive = unzipSync((await createArchive(note, fetcher)).bytes);
   expect(Object.keys(archive).map(path => path.replace(/^\d{8}_\d{6}_/, '')).sort()).toEqual(Object.keys(bundle.files).map(path => path.replace(/^\d{8}_\d{6}_/, '')).sort());
+});
+
+// A minimal in-memory File System Access directory, enough for the export writer.
+class MemoryDirectory {
+  kind = 'directory' as const;
+  entries = new Map<string, MemoryDirectory | Uint8Array>();
+  constructor(public name: string) {}
+  async getDirectoryHandle(name: string, options?: { create?: boolean }) {
+    const entry = this.entries.get(name);
+    if (entry instanceof MemoryDirectory) return entry;
+    if (entry) throw new DOMException('file', 'TypeMismatchError');
+    if (!options?.create) throw new DOMException('missing', 'NotFoundError');
+    const directory = new MemoryDirectory(name);
+    this.entries.set(name, directory);
+    return directory;
+  }
+  async getFileHandle(name: string, options?: { create?: boolean }) {
+    const entry = this.entries.get(name);
+    if (entry instanceof MemoryDirectory) throw new DOMException('directory', 'TypeMismatchError');
+    if (!entry && !options?.create) throw new DOMException('missing', 'NotFoundError');
+    return { createWritable: async () => {
+      let data: Uint8Array = new Uint8Array();
+      return { write: async (bytes: Uint8Array) => { data = bytes; }, close: async () => { this.entries.set(name, data); }, abort: async () => undefined };
+    } };
+  }
+  file(path: string): Uint8Array {
+    const parts = path.split('/');
+    let current: MemoryDirectory = this;
+    for (const part of parts.slice(0, -1)) current = current.entries.get(part) as MemoryDirectory;
+    return current.entries.get(parts.at(-1)!) as Uint8Array;
+  }
+}
+
+it('writes Markdown, assets and ZIPs directly into a chosen folder without overwriting', async () => {
+  const note = newNote('https://example.com/read', 'Node.js 入門');
+  const src = 'data:image/png;base64,aGVsbG8=';
+  note.doc = { type: 'doc', content: [{ type: 'image', attrs: { src } }] };
+  note.markdown = `![貼付](${src})`;
+  const fetcher = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } })) as unknown as typeof fetch;
+  const directory = new MemoryDirectory('notes-repo');
+  const handle = directory as unknown as FileSystemDirectoryHandle;
+  const bundle = await createBundle(note, fetcher);
+  expect(await writeBundle(handle, bundle)).toBe(bundle.basename);
+  expect(bundle.basename).toMatch(/^\d{8}_\d{6}_Node\.js 入門$/);
+  expect(strFromU8(directory.file(`${bundle.basename}/${bundle.basename}_note.md`))).toContain('![貼付](assets/image-001.png)');
+  expect([...directory.file(`${bundle.basename}/assets/image-001.png`)]).toEqual([1, 2, 3]);
+  // The same second and title gets a numbered folder instead of mixing files.
+  expect(await writeBundle(handle, bundle)).toBe(`${bundle.basename}_2`);
+  expect(directory.file(`${bundle.basename}_2/${bundle.basename}_article.md`)).toBeDefined();
+
+  const archive = await createArchive(note, fetcher);
+  expect(await writeArchive(handle, archive)).toBe(archive.filename);
+  expect(await writeArchive(handle, archive)).toBe(archive.filename.replace(/\.zip$/, '_2.zip'));
+  expect(Object.keys(unzipSync(directory.file(archive.filename)))).toContain('assets/image-001.png');
 });
